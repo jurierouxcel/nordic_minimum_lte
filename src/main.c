@@ -8,6 +8,15 @@
 #include <nrf_modem_gnss.h>
 #include <modem/nrf_modem_lib.h>
 #include <modem/lte_lc.h>
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/flash.h>
+#include <zephyr/storage/flash_map.h>
+
+#define TEST_PARTITION storage_partition
+#define TEST_PARTITION_OFFSET FIXED_PARTITION_OFFSET(TEST_PARTITION)
+#define TEST_PARTITION_DEVICE FIXED_PARTITION_DEVICE(TEST_PARTITION)
+#define FLASH_PAGE_SIZE 4096
 
 #define SLEEP_TIME_MS   1000
 
@@ -143,6 +152,60 @@ static void on_modem_lib_init(int ret, void *ctx)
 	}
 }
 
+void test_flash()
+{
+	const struct device *flash_dev = TEST_PARTITION_DEVICE;
+	struct flash_parameters flash_params;
+
+	memcpy(&flash_params, flash_get_parameters(flash_dev), sizeof(flash_params));
+
+	printf("Write data to internal flash.\n");
+
+	if (!device_is_ready(flash_dev))
+	{
+		printf("Internal storage device not ready\n");
+		return;
+	}
+
+	// Erase flash.
+	uint32_t offset = TEST_PARTITION_OFFSET;
+	if (flash_erase(flash_dev, offset, FLASH_PAGE_SIZE) != 0)
+	{
+		printf("Erase failed!\n");
+	}
+	else
+	{
+		printf("Erase succeeded!\n");
+	}
+
+	uint8_t data[4] = {1, 2, 3, 4};
+	// Write data to flash.
+	if (flash_write(flash_dev, TEST_PARTITION_OFFSET, &data[0], 4) != 0)
+	{
+		printf("Write failed!\n");
+		return;
+	}
+
+	// Read data from flash.
+	uint8_t data_read[4];
+	printf("Reading from flash.\n");
+	if (flash_read(flash_dev, TEST_PARTITION_OFFSET, &data_read[0], 4) != 0)
+	{
+		printf("Read failed!\n");
+		return;
+	}
+
+	// Compare read data.
+	if (memcmp(&data[0], &data_read[0], 4))
+	{
+		printf("Data read does not match data written!\n");
+	}
+	else
+	{
+		printf("Data read matches data written. Good!\n");
+	}
+}
+
 int main(void)
 {
 	int ret0;
@@ -173,6 +236,8 @@ int main(void)
 	{
 		printf("Modem library init failed, err: %d\n", ret);
 	}
+
+	test_flash();
 
 	while (1)
 	{
