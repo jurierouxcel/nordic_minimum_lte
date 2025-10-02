@@ -12,13 +12,22 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/flash.h>
 #include <zephyr/storage/flash_map.h>
+#include <nrfx_timer.h>
+#include <zephyr/irq.h>
 
+// Sleep time.
+#define SLEEP_TIME_MS   1000
+
+// Timer instance.
+#define TIMER_INST_IDX 0
+// Timer time.
+#define TIME_TO_WAIT_MS 5000UL
+
+// Flash partition.
 #define TEST_PARTITION storage_partition
 #define TEST_PARTITION_OFFSET FIXED_PARTITION_OFFSET(TEST_PARTITION)
 #define TEST_PARTITION_DEVICE FIXED_PARTITION_DEVICE(TEST_PARTITION)
 #define FLASH_PAGE_SIZE 4096
-
-#define SLEEP_TIME_MS   1000
 
 // The devicetree node identifier for the LEDs.
 #define LED0_NODE DT_ALIAS(led0)
@@ -33,6 +42,17 @@ static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
 static const struct gpio_dt_spec led3 = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
 
 NRF_MODEM_LIB_ON_INIT(lwm2m_init_hook, on_modem_lib_init, NULL);
+
+nrfx_timer_t timer_inst = NRFX_TIMER_INSTANCE(TIMER_INST_IDX);;
+
+static void timer_handler(nrf_timer_event_t event_type, void * p_context)
+{
+    if (event_type == NRF_TIMER_EVENT_COMPARE0)
+    {
+        char * p_msg = p_context;
+        printf("Timer finished. Context passed to the handler: >%s<\n", p_msg);
+    }
+}
 
 /**
  * The GNSS event handler is called in interrupt service routine context.
@@ -152,6 +172,39 @@ static void on_modem_lib_init(int ret, void *ctx)
 	}
 }
 
+void test_timer()
+{
+	// Configure timer.
+	IRQ_CONNECT(NRFX_IRQ_NUMBER_GET(NRF_TIMER_INST_GET(TIMER_INST_IDX)), IRQ_PRIO_LOWEST,
+                NRFX_TIMER_INST_HANDLER_GET(TIMER_INST_IDX), 0, 0);
+	// timer_inst = NRFX_TIMER_INSTANCE(TIMER_INST_IDX);
+	uint32_t base_frequency = NRF_TIMER_BASE_FREQUENCY_GET(timer_inst.p_reg);
+    nrfx_timer_config_t config = NRFX_TIMER_DEFAULT_CONFIG(base_frequency);
+    config.bit_width = NRF_TIMER_BIT_WIDTH_32;
+    config.p_context = "Some context";
+
+	nrfx_err_t status = nrfx_timer_init(&timer_inst, &config, timer_handler);
+    if (status != NRFX_SUCCESS)
+	{
+		printf("Failed to init timer.\n");
+	}
+
+	nrfx_timer_clear(&timer_inst);
+
+	// Creating variable desired_ticks to store the output of nrfx_timer_ms_to_ticks function.
+    uint32_t desired_ticks = nrfx_timer_ms_to_ticks(&timer_inst, TIME_TO_WAIT_MS);
+    printf("Time to wait: %lu ms.\n", TIME_TO_WAIT_MS);
+
+	/*
+     * Set the timer channel 0 in the extended compare mode to clear and repeat the timer and
+     * trigger an interrupt if internal counter register is equal to desired_ticks.
+     */
+    nrfx_timer_extended_compare(&timer_inst, NRF_TIMER_CC_CHANNEL0, desired_ticks,
+                                NRF_TIMER_SHORT_COMPARE0_CLEAR_MASK, true);
+
+	nrfx_timer_enable(&timer_inst);
+}
+
 void test_flash()
 {
 	const struct device *flash_dev = TEST_PARTITION_DEVICE;
@@ -212,6 +265,8 @@ int main(void)
 	int ret1;
 	int ret2;
 	int ret3;
+
+	test_timer();
 
 	// Validate the GPIO pin for the LEDs.
 	if (!gpio_is_ready_dt(&led0) || !gpio_is_ready_dt(&led1) ||
