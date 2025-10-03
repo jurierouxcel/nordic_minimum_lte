@@ -2,18 +2,20 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/flash.h>
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/storage/flash_map.h>
+#include <zephyr/irq.h>
 #include <string.h>
 #include <nrf_modem.h>
 #include <nrf_modem_at.h>
 #include <nrf_modem_gnss.h>
 #include <modem/nrf_modem_lib.h>
 #include <modem/lte_lc.h>
-#include <zephyr/device.h>
-#include <zephyr/devicetree.h>
-#include <zephyr/drivers/flash.h>
-#include <zephyr/storage/flash_map.h>
 #include <nrfx_timer.h>
-#include <zephyr/irq.h>
+#include <zephyr/sys/util.h>
+#include <date_time.h>
 
 // Sleep time.
 #define SLEEP_TIME_MS   1000
@@ -45,6 +47,42 @@ NRF_MODEM_LIB_ON_INIT(lwm2m_init_hook, on_modem_lib_init, NULL);
 
 nrfx_timer_t timer_inst = NRFX_TIMER_INSTANCE(TIMER_INST_IDX);;
 
+static int set_date_time()
+{
+	int ret = 0;
+	struct tm tm_var = {
+		.tm_year = 2024 - 1900,
+		.tm_mon = 11 - 1,
+		.tm_mday = 17,
+		.tm_hour = 4,
+		.tm_min = 19,
+		.tm_sec = 0,
+	};
+
+	printk("Setting RTC date and time to: %04d-%02d-%02d %02d:%02d:%02d\n", tm_var.tm_year + 1900,
+	       tm_var.tm_mon + 1, tm_var.tm_mday, tm_var.tm_hour, tm_var.tm_min, tm_var.tm_sec);
+
+	ret =  date_time_set(&tm_var);
+
+	return ret;
+}
+
+static int get_date_time()
+{
+	int ret = 0;
+	int64_t unix_time_ms;
+
+	ret = date_time_now(&unix_time_ms);
+	if (ret < 0) {
+		printk("Cannot read date time: %d\n", ret);
+		return ret;
+	}
+
+	printk("UTC time in ms: %"PRIi64"\n", unix_time_ms);
+
+	return ret;
+}
+
 static void timer_handler(nrf_timer_event_t event_type, void * p_context)
 {
     if (event_type == NRF_TIMER_EVENT_COMPARE0)
@@ -52,6 +90,9 @@ static void timer_handler(nrf_timer_event_t event_type, void * p_context)
         char * p_msg = p_context;
         printf("Timer finished. Context passed to the handler: >%s<\n", p_msg);
     }
+
+	// Continously output the RTC time.
+	get_date_time();
 }
 
 /**
@@ -64,7 +105,7 @@ static void gnss_event_handler(int event_id)
     int err;
 	struct nrf_modem_gnss_pvt_data_frame pvt_data;
 
-    /* Process event */
+    // Process event.
     switch (event_id)
 	{
     case NRF_MODEM_GNSS_EVT_PVT:
@@ -266,8 +307,6 @@ int main(void)
 	int ret2;
 	int ret3;
 
-	test_timer();
-
 	// Validate the GPIO pin for the LEDs.
 	if (!gpio_is_ready_dt(&led0) || !gpio_is_ready_dt(&led1) ||
 		!gpio_is_ready_dt(&led2) || !gpio_is_ready_dt(&led3))
@@ -292,7 +331,10 @@ int main(void)
 		printf("Modem library init failed, err: %d\n", ret);
 	}
 
+	test_timer();
 	test_flash();
+
+	set_date_time();
 
 	while (1)
 	{
